@@ -1,0 +1,11 @@
+application: konani2-1365
+module: job
+version: master
+runtime: go
+api_version: go1.8
+threadsafe: true
+
+handlers:
+  - url: /.*
+    login: admin
+    script: _go_app
