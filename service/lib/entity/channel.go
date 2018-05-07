@@ -9,10 +9,10 @@ type CID int
 type Channel struct {
 	ID       CID
 	Name     string
-	URL      string
+	URL      string `datastore:",noindex"`
 	IEPGName string
 	GID      int
-	Comment  string
+	Comment  string `datastore:",noindex"`
 }
 
 func (c Channel) Key(ctx context.Context) *datastore.Key {
