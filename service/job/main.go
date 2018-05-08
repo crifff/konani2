@@ -16,6 +16,7 @@ import (
 	"google.golang.org/appengine/log"
 	"fmt"
 	"encoding/xml"
+	"strings"
 )
 
 func init() {
@@ -23,50 +24,65 @@ func init() {
 	http.HandleFunc("/update_title", UpdateTitle)
 }
 
-var updateTitleQueue = "default"
+var updateTitleQueue = "update-title"
 
 func UpdateTitle(w http.ResponseWriter, r *http.Request) {
 	ctx := appengine.NewContext(r)
+	log.Infof(ctx, "start update title")
 
-	tidStr := r.FormValue("tid")
-	id, err := strconv.Atoi(tidStr)
-	if err != nil {
-		log.Errorf(ctx, "input value: %s", tidStr)
-		return
+	tidStrs := strings.Split(r.FormValue("tid"), ",")
+
+	var tids []entity.TID
+	for _, s := range tidStrs {
+		id, _ := strconv.Atoi(s)
+		tids = append(tids, entity.TID(id))
 	}
 
-	TID := entity.TID(id)
+	var titles []*entity.Title
 
-	log.Infof(ctx, "start update title TID:%d", int(TID))
+	for _, TID := range tids {
 
-	if _, err := entity.GetTitle(ctx, TID); err == datastore.ErrNoSuchEntity {
-		syoboiTitle := fetchTitle(ctx, TID)
-		title := &entity.Title{
-			ID:            entity.TID(syoboiTitle.TitleItems.TitleItem.TID),
-			Title:         syoboiTitle.TitleItems.TitleItem.Title,
-			ShortTitle:    syoboiTitle.TitleItems.TitleItem.ShortTitle,
-			Kana:          syoboiTitle.TitleItems.TitleItem.TitleYomi,
-			Comment:       syoboiTitle.TitleItems.TitleItem.Comment,
-			Category:      syoboiTitle.TitleItems.TitleItem.Cat,
-			Flag:          syoboiTitle.TitleItems.TitleItem.TitleFlag,
-			FirstYear:     syoboiTitle.TitleItems.TitleItem.FirstYear,
-			FirstMonth:    syoboiTitle.TitleItems.TitleItem.FirstMonth,
-			FirstEndYear:  syoboiTitle.TitleItems.TitleItem.FirstEndYear,
-			FirstEndMonth: syoboiTitle.TitleItems.TitleItem.FirstEndMonth,
-			FirstCh:       syoboiTitle.TitleItems.TitleItem.FirstCh,
-			Keywords:      syoboiTitle.TitleItems.TitleItem.Keywords,
+		if _, err := entity.GetTitle(ctx, TID); err == datastore.ErrNoSuchEntity {
+			syoboiTitle := fetchTitle(ctx, TID)
+			title := &entity.Title{
+				ID:            entity.TID(syoboiTitle.TitleItems.TitleItem.TID),
+				Title:         syoboiTitle.TitleItems.TitleItem.Title,
+				ShortTitle:    syoboiTitle.TitleItems.TitleItem.ShortTitle,
+				Kana:          syoboiTitle.TitleItems.TitleItem.TitleYomi,
+				Comment:       syoboiTitle.TitleItems.TitleItem.Comment,
+				Category:      syoboiTitle.TitleItems.TitleItem.Cat,
+				Flag:          syoboiTitle.TitleItems.TitleItem.TitleFlag,
+				FirstYear:     syoboiTitle.TitleItems.TitleItem.FirstYear,
+				FirstMonth:    syoboiTitle.TitleItems.TitleItem.FirstMonth,
+				FirstEndYear:  syoboiTitle.TitleItems.TitleItem.FirstEndYear,
+				FirstEndMonth: syoboiTitle.TitleItems.TitleItem.FirstEndMonth,
+				FirstCh:       syoboiTitle.TitleItems.TitleItem.FirstCh,
+				Keywords:      syoboiTitle.TitleItems.TitleItem.Keywords,
+			}
+			titles = append(titles, title)
+
 		}
 
-		if _, err := datastore.Put(ctx, title.Key(ctx), title); err != nil {
+	}
+	if len(titles) > 0 {
+		var keys []*datastore.Key
+		for _, t := range titles {
+			keys = append(keys, t.Key(ctx))
+		}
+		if _, err := datastore.PutMulti(ctx, keys, titles); err != nil {
 			panic(err)
 		}
+
+		log.Infof(ctx, "update title count:%d", len(titles))
 	}
 
+	log.Infof(ctx, "finish update title")
 }
 
 func SyncCalender(w http.ResponseWriter, r *http.Request) {
 	ctx := appengine.NewContext(r)
 
+	log.Infof(ctx, "start sync calendar")
 	data := fetchCalendar(ctx)
 
 	//channel
@@ -78,6 +94,7 @@ func SyncCalender(w http.ResponseWriter, r *http.Request) {
 	if _, err := datastore.PutMulti(ctx, cKeys, channels); err != nil {
 		panic(err)
 	}
+	log.Infof(ctx, "update channels count:%d", len(channels))
 
 	//channel
 	programs := createPrograms(data.Items)
@@ -88,33 +105,42 @@ func SyncCalender(w http.ResponseWriter, r *http.Request) {
 	if _, err := datastore.PutMulti(ctx, pKeys, programs); err != nil {
 		panic(err)
 	}
+	log.Infof(ctx, "update programs count:%d", len(programs))
 
 	TIDs := createTIDList(data.Items)
 
-	tasks := createUpdateTitleTaskList(TIDs)
-	var tmp []*taskqueue.Task
-	for _, t := range tasks {
+	var tmp []entity.TID
+	for _, t := range TIDs {
 		tmp = append(tmp, t)
 		if len(tmp) >= 100 {
-			taskqueue.AddMulti(ctx, tmp, updateTitleQueue)
-			tmp = make([]*taskqueue.Task, 0)
-
+			queues := createUpdateTitleTaskList(tmp)
+			taskqueue.AddMulti(ctx, queues, updateTitleQueue)
+			log.Infof(ctx, "enqueue update title count:%d", len(tmp))
+			tmp = make([]entity.TID, 0)
 		}
 	}
 	if len(tmp) > 0 {
-		taskqueue.AddMulti(ctx, tmp, updateTitleQueue)
-		tmp = make([]*taskqueue.Task, 0)
+		queues := createUpdateTitleTaskList(tmp)
+		taskqueue.AddMulti(ctx, queues, updateTitleQueue)
+		log.Infof(ctx, "enqueue update title count:%d", len(tmp))
+		tmp = make([]entity.TID, 0)
 	}
+	log.Infof(ctx, "finish sync calendar")
 }
 
 func createUpdateTitleTaskList(tids []entity.TID) []*taskqueue.Task {
-	var tasks []*taskqueue.Task
+
+	var strs []string
 	for _, tid := range tids {
-		t := taskqueue.NewPOSTTask("/update_title", url.Values{
-			"tid": {strconv.Itoa(int(tid))},
-		})
-		tasks = append(tasks, t)
+		s := strconv.Itoa(int(tid))
+		strs = append(strs, s)
 	}
+
+	var tasks []*taskqueue.Task
+	t := taskqueue.NewPOSTTask("/update_title", url.Values{
+		"tid": {strings.Join(strs, ",")},
+	})
+	tasks = append(tasks, t)
 	return tasks
 }
 
