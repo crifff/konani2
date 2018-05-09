@@ -45,19 +45,12 @@ func UpdateTitle(w http.ResponseWriter, r *http.Request) {
 		if _, err := entity.GetTitle(ctx, TID); err == datastore.ErrNoSuchEntity {
 			syoboiTitle := fetchTitle(ctx, TID)
 			title := &entity.Title{
-				ID:            entity.TID(syoboiTitle.TitleItems.TitleItem.TID),
-				Title:         syoboiTitle.TitleItems.TitleItem.Title,
-				ShortTitle:    syoboiTitle.TitleItems.TitleItem.ShortTitle,
-				Kana:          syoboiTitle.TitleItems.TitleItem.TitleYomi,
-				Comment:       syoboiTitle.TitleItems.TitleItem.Comment,
-				Category:      syoboiTitle.TitleItems.TitleItem.Cat,
-				Flag:          syoboiTitle.TitleItems.TitleItem.TitleFlag,
-				FirstYear:     syoboiTitle.TitleItems.TitleItem.FirstYear,
-				FirstMonth:    syoboiTitle.TitleItems.TitleItem.FirstMonth,
-				FirstEndYear:  syoboiTitle.TitleItems.TitleItem.FirstEndYear,
-				FirstEndMonth: syoboiTitle.TitleItems.TitleItem.FirstEndMonth,
-				FirstCh:       syoboiTitle.TitleItems.TitleItem.FirstCh,
-				Keywords:      syoboiTitle.TitleItems.TitleItem.Keywords,
+				ID:         entity.TID(syoboiTitle.TitleItems.TitleItem.TID),
+				Title:      syoboiTitle.TitleItems.TitleItem.Title,
+				ShortTitle: syoboiTitle.TitleItems.TitleItem.ShortTitle,
+				Comment:    syoboiTitle.TitleItems.TitleItem.Comment,
+				Category:   syoboiTitle.TitleItems.TitleItem.Cat,
+				Flag:       syoboiTitle.TitleItems.TitleItem.TitleFlag,
 			}
 			titles = append(titles, title)
 
@@ -98,32 +91,60 @@ func SyncCalender(w http.ResponseWriter, r *http.Request) {
 
 	//channel
 	programs := createPrograms(data.Items)
-	var pKeys []*datastore.Key
-	for _, c := range programs {
-		pKeys = append(pKeys, c.Key(ctx))
-	}
-	if _, err := datastore.PutMulti(ctx, pKeys, programs); err != nil {
-		panic(err)
-	}
-	log.Infof(ctx, "update programs count:%d", len(programs))
 
-	TIDs := createTIDList(data.Items)
+	{
+		var tmp []*entity.Program
+		for _, p := range programs {
+			tmp = append(tmp, p)
+			if len(tmp) >= 100 {
+				var pKeys []*datastore.Key
+				for _, c := range tmp {
+					pKeys = append(pKeys, c.Key(ctx))
+				}
+				if _, err := datastore.PutMulti(ctx, pKeys, tmp); err != nil {
+					panic(err)
+				}
+				tmp = make([]*entity.Program, 0)
+			}
+		}
+		if len(tmp) > 0 {
+			var pKeys []*datastore.Key
+			for _, c := range tmp {
+				pKeys = append(pKeys, c.Key(ctx))
+			}
+			if _, err := datastore.PutMulti(ctx, pKeys, tmp); err != nil {
+				panic(err)
+			}
+			tmp = make([]*entity.Program, 0)
+		}
+		log.Infof(ctx, "update programs count:%d", len(programs))
+	}
 
-	var tmp []entity.TID
-	for _, t := range TIDs {
+	titles := createTtitleList(data.Items)
+
+	var tmp []*entity.Title
+	for _, t := range titles {
 		tmp = append(tmp, t)
 		if len(tmp) >= 100 {
-			queues := createUpdateTitleTaskList(tmp)
-			taskqueue.AddMulti(ctx, queues, updateTitleQueue)
-			log.Infof(ctx, "enqueue update title count:%d", len(tmp))
-			tmp = make([]entity.TID, 0)
+			var pKeys []*datastore.Key
+			for _, c := range tmp {
+				pKeys = append(pKeys, c.Key(ctx))
+			}
+			if _, err := datastore.PutMulti(ctx, pKeys, tmp); err != nil {
+				panic(err)
+			}
+			tmp = make([]*entity.Title, 0)
 		}
 	}
 	if len(tmp) > 0 {
-		queues := createUpdateTitleTaskList(tmp)
-		taskqueue.AddMulti(ctx, queues, updateTitleQueue)
-		log.Infof(ctx, "enqueue update title count:%d", len(tmp))
-		tmp = make([]entity.TID, 0)
+		var pKeys []*datastore.Key
+		for _, c := range tmp {
+			pKeys = append(pKeys, c.Key(ctx))
+		}
+		if _, err := datastore.PutMulti(ctx, pKeys, tmp); err != nil {
+			panic(err)
+		}
+		tmp = make([]*entity.Title, 0)
 	}
 	log.Infof(ctx, "finish sync calendar")
 }
@@ -144,17 +165,22 @@ func createUpdateTitleTaskList(tids []entity.TID) []*taskqueue.Task {
 	return tasks
 }
 
-func createTIDList(items []SyoboiItem) []entity.TID {
-	tmp := make(map[int]struct{})
+func createTtitleList(items []SyoboiItem) map[int]*entity.Title {
+	tmp := make(map[int]*entity.Title)
 	for _, i := range items {
-		tmp[i.TID] = struct{}{}
+		e := &entity.Title{
+			ID:         entity.TID(i.TID),
+			Title:      i.Title,
+			ShortTitle: i.ShortTitle,
+			Comment:    i.ProgComment,
+			Category:   i.Cat,
+			Flag:       i.Flag,
+			Urls:       i.Urls,
+		}
+		tmp[i.TID] = e
 	}
 
-	var result []entity.TID
-	for tid := range tmp {
-		result = append(result, entity.TID(tid))
-	}
-	return result
+	return tmp
 }
 
 func createPrograms(items []SyoboiItem) []*entity.Program {
@@ -173,6 +199,15 @@ func createPrograms(items []SyoboiItem) []*entity.Program {
 			Warn:      i.Warn,
 			Revision:  i.Revision,
 			AllDay:    i.AllDay,
+			Title: entity.Title{
+				ID:         entity.TID(i.TID),
+				Title:      i.Title,
+				ShortTitle: i.ShortTitle,
+				Comment:    i.ProgComment,
+				Category:   i.Cat,
+				Flag:       i.Flag,
+				Urls:       i.Urls,
+			},
 		})
 	}
 	return result

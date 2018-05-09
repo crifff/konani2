@@ -14,12 +14,13 @@ type Program struct {
 	StartTime time.Time
 	EndTime   time.Time
 	Count     int
-	Offset    int `datastore:",noindex"`
+	Offset    int    `datastore:",noindex"`
 	Comment   string `datastore:",noindex"`
 	Deleted   int
-	Warn      int `datastore:",noindex"`
+	Warn      int    `datastore:",noindex"`
 	Revision  int
 	AllDay    int
+	Title     Title
 }
 
 func (p Program) Key(ctx context.Context) *datastore.Key {

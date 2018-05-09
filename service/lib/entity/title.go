@@ -10,16 +10,10 @@ type Title struct {
 	ID            TID
 	Title         string
 	ShortTitle    string
-	Kana          string
 	Comment       string `datastore:",noindex"`
 	Category      int
 	Flag          int
-	FirstYear     int
-	FirstMonth    int
-	FirstEndYear  int
-	FirstEndMonth int
-	FirstCh       string `datastore:",noindex"`
-	Keywords      string `datastore:",noindex"`
+	Urls      string `datastore:",noindex"`
 }
 
 func (t Title) Key(ctx context.Context) *datastore.Key {
